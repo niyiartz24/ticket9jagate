@@ -18,7 +18,7 @@
 
 import { prisma } from "./client";
 import { recordAudit } from "./audit";
-import type { CheckInStatus, PaymentStatus } from "@prisma/client";
+import type { Ticket, PaymentStatus } from "@prisma/client";
 
 export interface CheckInRequest {
   ticketCode: string;
@@ -33,7 +33,7 @@ export interface CheckInRequest {
 }
 
 export type CheckInOutcome =
-  | { outcome: "SUCCESS"; ticket: NonNullable<Awaited<ReturnType<typeof runCheckIn>>>["ticket"] }
+  | { outcome: "SUCCESS"; ticket: Ticket }
   | { outcome: "DUPLICATE"; checkedInAt: Date; checkedInByName: string }
   | { outcome: "INVALID" }
   | { outcome: "PAYMENT_INELIGIBLE"; paymentStatus: PaymentStatus }
