@@ -1,0 +1,175 @@
+// TicketGate — Prisma schema
+// PostgreSQL relational schema for event ticket verification & check-in.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  STAFF
+}
+
+enum EventStatus {
+  DRAFT
+  ACTIVE
+  CLOSED
+}
+
+enum PaymentStatus {
+  SUCCESSFUL
+  PENDING
+  FAILED
+  CANCELLED
+  UNKNOWN
+}
+
+enum TicketStatus {
+  UNUSED
+  CHECKED_IN
+  VOID
+}
+
+enum CheckInStatus {
+  SUCCESS
+  DUPLICATE
+  INVALID
+  PAYMENT_INELIGIBLE
+  ADMIN_OVERRIDE
+  OFFLINE_PENDING_SYNC
+  SYNC_CONFLICT_REJECTED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  staffEvents   StaffEvent[]
+  checkIns      CheckIn[]     @relation("StaffCheckIns")
+  auditLogs     AuditLog[]
+  ticketsClosed Ticket[]      @relation("CheckedInByUser")
+
+  @@index([email])
+  @@index([role, isActive])
+}
+
+model Event {
+  id          String      @id @default(cuid())
+  name        String
+  description String?
+  venue       String
+  eventDate   DateTime
+  status      EventStatus @default(DRAFT)
+  // Per-event configurable offline check-in policy (see lib/offline/policy.ts)
+  offlinePolicy Json      @default("{\"allowOfflineCheckIn\": true, \"requireLocalTicketCache\": true}")
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  tickets      Ticket[]
+  staffEvents  StaffEvent[]
+  checkIns     CheckIn[]
+
+  @@index([status, eventDate])
+}
+
+model Ticket {
+  id                String        @id @default(cuid())
+  ticketCode        String        @unique
+  externalTicketId  String?       // BudPay-side identifier, if distinct from ticketCode
+  eventId           String
+  event             Event         @relation(fields: [eventId], references: [id])
+  category          String
+  customerName      String
+  customerEmail     String
+  amount            Decimal       @db.Decimal(12, 2)
+  quantity          Int           @default(1)
+  orderReference    String
+  paymentStatus     PaymentStatus @default(UNKNOWN)
+  ticketStatus      TicketStatus  @default(UNUSED)
+  checkedInAt       DateTime?
+  checkedInById     String?
+  checkedInBy       User?         @relation("CheckedInByUser", fields: [checkedInById], references: [id])
+  // Cached copy of the last authoritative provider response, for offline sync + audit.
+  lastSyncedAt      DateTime?
+  rawProviderData   Json?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  checkIns CheckIn[]
+
+  @@index([ticketCode])
+  @@index([eventId, ticketStatus])
+  @@index([orderReference])
+  @@index([customerEmail])
+}
+
+model CheckIn {
+  id           String        @id @default(cuid())
+  ticketId     String?
+  ticket       Ticket?       @relation(fields: [ticketId], references: [id])
+  eventId      String
+  event        Event         @relation(fields: [eventId], references: [id])
+  staffId      String
+  staff        User          @relation("StaffCheckIns", fields: [staffId], references: [id])
+  ticketCode   String
+  status       CheckInStatus
+  scannedAt    DateTime
+  deviceId     String?
+  // Idempotency key generated client-side for offline queue entries, so a
+  // retried sync never creates a second row for the same physical scan.
+  clientScanId String?       @unique
+  createdAt    DateTime      @default(now())
+
+  @@index([eventId, status])
+  @@index([staffId, scannedAt])
+  @@index([ticketCode])
+}
+
+model StaffEvent {
+  id        String   @id @default(cuid())
+  staffId   String
+  staff     User     @relation(fields: [staffId], references: [id])
+  eventId   String
+  event     Event    @relation(fields: [eventId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@unique([staffId, eventId])
+}
+
+model IntegrationConfig {
+  id            String   @id @default(cuid())
+  provider      String   // e.g. "budpay"
+  // Credentials/config are encrypted at rest (see lib/integrations/crypto.ts)
+  // before being stored here. Never store plaintext secrets.
+  encryptedConfig String
+  isActive      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([provider])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String   // e.g. "TICKET_CHECK_IN", "STAFF_CREATED"
+  entity    String   // e.g. "Ticket", "Event", "User"
+  entityId  String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([action, createdAt])
+}
