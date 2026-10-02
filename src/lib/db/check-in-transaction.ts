@@ -71,7 +71,7 @@ export async function runCheckIn(req: CheckInRequest): Promise<CheckInOutcome> {
           eventId: req.eventId,
           staffId: req.staffId,
           ticketCode: req.ticketCode,
-          status: "INVALID" as CheckInStatus,
+          status: "INVALID",
           scannedAt: req.scannedAt,
           deviceId: req.deviceId,
           clientScanId: req.clientScanId,
